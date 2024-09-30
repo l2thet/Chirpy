@@ -1,20 +1,54 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"html/template"
+	"log"
 	"net/http"
+	"os"
+	"regexp"
 	"sync/atomic"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	"github.com/l2thet/Chirpy/internal/database"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries *database.Queries
+	platform string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func main() {
+	
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	dbQueries := database.New(db)
 
 	apiCfg := &apiConfig{}
 	apiCfg.fileserverHits.Store(0)
+	apiCfg.dbQueries = dbQueries
+	
+	apiCfg.platform = os.Getenv("PLATFORM")
+
 
 	mux := http.NewServeMux()
 
@@ -22,6 +56,42 @@ func main() {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
+	})
+
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Email string `json:"email"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		dbUser, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		apiUser := User{
+			ID:        dbUser.ID,
+			CreatedAt: dbUser.CreatedAt,
+			UpdatedAt: dbUser.UpdatedAt,
+			Email:     dbUser.Email,
+		}
+		dat, err := json.Marshal(apiUser)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write(dat)
 	})
 
 	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
@@ -33,25 +103,26 @@ func main() {
 		params := parameters{}
 		err := decoder.Decode(&params)
 		if err != nil {
-			w.WriteHeader(500)
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
 		if len(params.Body) > 140 {
-			w.WriteHeader(400)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
 		type returnVals struct{
-			Valid bool `json:"valid"`
+			Cleaned_Body string `json:"cleaned_body"`
 		}
-		respBody := returnVals{Valid: true}
+		respBody := returnVals{Cleaned_Body: stringCleaner(params.Body)}
+
 
 		dat, err := json.Marshal(respBody)
-			if err != nil {
-				w.WriteHeader(500)
-				return
-			}
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -98,5 +169,45 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request){
+	if cfg.platform != "dev" {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	err := cfg.dbQueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	cfg.fileserverHits.Store(0)
+}
+
+func stringCleaner(input string) string {
+	patterns := []string{`kerfuffle`,`sharbert`, `fornax`}
+	compiledPatterns, err := compilePatterns(patterns)
+    if err != nil {
+		return fmt.Sprintf("Error compiling patterns: %s", err)
+    }
+
+	return stringReplace(input, compiledPatterns)
+}
+
+func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
+    var compiledPatterns []*regexp.Regexp
+    for _, pattern := range patterns {
+        re, err := regexp.Compile("(?i)" + pattern)
+        if err != nil {
+            return nil, err
+        }
+        compiledPatterns = append(compiledPatterns, re)
+    }
+    return compiledPatterns, nil
+}
+
+func stringReplace(input string, patterns []*regexp.Regexp) string {
+    for _, re := range patterns {
+        input = re.ReplaceAllString(input, "****")
+    }
+    return input
 }
