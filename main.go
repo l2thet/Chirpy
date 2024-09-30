@@ -118,11 +118,27 @@ func main() {
 			return
 		}
 
-		type returnVals struct{
-			Cleaned_Body string `json:"cleaned_body"`
+		chirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: params.User_Id})
+		if err != nil {
+			log.Printf("Error creating chirp: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
-		respBody := returnVals{Cleaned_Body: stringCleaner(params.Body)}
 
+		type returnVals struct{
+			Body string `json:"body"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			UserID uuid.UUID `json:"user_id"`
+			ID uuid.UUID `json:"id"`
+		}
+		respBody := returnVals{
+			Body: stringCleaner(chirp.Body),
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			UserID: chirp.UserID,
+			ID: chirp.ID,
+		}
 
 		dat, err := json.Marshal(respBody)
 		if err != nil {
@@ -132,7 +148,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 		w.Write(dat)
 	})
 
