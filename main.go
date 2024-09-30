@@ -67,13 +67,15 @@ func main() {
 		params := parameters{}
 		err := decoder.Decode(&params)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			log.Printf("Error decoding request body: %v", err)
+            http.Error(w, "Invalid request payload", http.StatusBadRequest)
+            return
 		}
 
 		dbUser, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("Error creating user: %v", err)
+            http.Error(w, "Error creating user", http.StatusInternalServerError)
 			return
 		}
 
@@ -85,8 +87,9 @@ func main() {
 		}
 		dat, err := json.Marshal(apiUser)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+			log.Printf("Error marshalling user data: %v", err)
+            http.Error(w, "Error processing user data", http.StatusInternalServerError)
+            return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -94,20 +97,23 @@ func main() {
 		w.Write(dat)
 	})
 
-	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
 			Body string `json:"body"`
+			User_Id uuid.UUID `json:"user_id"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
 		params := parameters{}
 		err := decoder.Decode(&params)
 		if err != nil {
+			log.Printf("Error decoding request body: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
 		if len(params.Body) > 140 {
+			log.Printf("Message is beyond the max chars: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -120,6 +126,7 @@ func main() {
 
 		dat, err := json.Marshal(respBody)
 		if err != nil {
+			log.Printf("Error building the response: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
