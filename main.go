@@ -49,7 +49,6 @@ func main() {
 	
 	apiCfg.platform = os.Getenv("PLATFORM")
 
-
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -125,14 +124,14 @@ func main() {
 			return
 		}
 
-		type returnVals struct{
+		type Chirp struct{
 			Body string `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 			UserID uuid.UUID `json:"user_id"`
 			ID uuid.UUID `json:"id"`
 		}
-		respBody := returnVals{
+		respBody := Chirp{
 			Body: stringCleaner(chirp.Body),
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
@@ -149,6 +148,46 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
+		w.Write(dat)
+	})
+
+	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		type Chirp struct{
+			Body string `json:"body"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			UserID uuid.UUID `json:"user_id"`
+			ID uuid.UUID `json:"id"`
+		}
+
+		dbChirps, err := apiCfg.dbQueries.Chirps(r.Context())
+		if err != nil {
+			log.Printf("Error creating chirp: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		
+		var chirps []Chirp
+		for _, dbChirp := range dbChirps {
+			chirps = append(chirps, Chirp{
+				Body: stringCleaner(dbChirp.Body),
+				CreatedAt: dbChirp.CreatedAt,
+				UpdatedAt: dbChirp.UpdatedAt,
+				UserID: dbChirp.UserID,
+				ID: dbChirp.ID,
+			})
+		}
+
+		dat, err := json.Marshal(chirps)
+		if err != nil {
+			log.Printf("Error building the response: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		w.Write(dat)
 	})
 
