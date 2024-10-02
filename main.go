@@ -166,7 +166,6 @@ func main() {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-
 		
 		var chirps []Chirp
 		for _, dbChirp := range dbChirps {
@@ -180,6 +179,50 @@ func main() {
 		}
 
 		dat, err := json.Marshal(chirps)
+		if err != nil {
+			log.Printf("Error building the response: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(dat)
+	})
+
+	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		type Chirp struct{
+			Body string `json:"body"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			UserID uuid.UUID `json:"user_id"`
+			ID uuid.UUID `json:"id"`
+		}
+
+		idString := r.PathValue("chirpID")
+		id, err := uuid.Parse(idString)
+		if err != nil {
+			log.Printf("Error parsing UUID: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		dbChirp, err := apiCfg.dbQueries.Chirp(r.Context(), id)
+		if err != nil {
+			log.Printf("Error retrieving chirp: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		chirp := Chirp{
+			Body: stringCleaner(dbChirp.Body),
+			CreatedAt: dbChirp.CreatedAt,
+			UpdatedAt: dbChirp.UpdatedAt,
+			UserID: dbChirp.UserID,
+			ID: dbChirp.ID,
+		}
+
+		dat, err := json.Marshal(chirp)
 		if err != nil {
 			log.Printf("Error building the response: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
