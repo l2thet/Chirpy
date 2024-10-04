@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/l2thet/Chirpy/internal/database"
+	"github.com/l2thet/Chirpy/internal/database/auth"
 	_ "github.com/lib/pq"
 )
 
@@ -60,6 +61,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
 			Email string `json:"email"`
+			Password string `json:"password"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
@@ -71,7 +73,17 @@ func main() {
             return
 		}
 
-		dbUser, err := apiCfg.dbQueries.CreateUser(r.Context(), params.Email)
+		hashed_pass, err := auth.HashPassword(params.Password)
+		if err != nil {
+			log.Printf("Error hashing password: %v", err)
+			http.Error(w, "Error hashing password", http.StatusInternalServerError)
+			return
+		}
+
+		dbUser, err := apiCfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{
+			Email:    params.Email,
+			HashedPassword: hashed_pass,
+		})
 		if err != nil {
 			log.Printf("Error creating user: %v", err)
             http.Error(w, "Error creating user", http.StatusInternalServerError)
@@ -227,6 +239,53 @@ func main() {
 			log.Printf("Error building the response: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(dat)
+	})
+
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Email string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding request body: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		user, err := apiCfg.dbQueries.UserByEmail(r.Context(), params.Email)
+		if err != nil {
+			log.Printf("Error retrieving user: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		err = auth.CheckPasswordHash(params.Password, user.HashedPassword)
+		if err != nil {
+			log.Printf("Email or password invalid: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		userData := User{
+			ID: user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email: user.Email,
+		}
+		dat, err := json.Marshal(userData)
+		if err != nil {
+			log.Printf("Error marshalling user data: %v", err)
+            http.Error(w, "Error processing user data", http.StatusInternalServerError)
+            return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
