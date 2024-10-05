@@ -23,14 +23,18 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
 	platform string
+	secret string
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
+	ID uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	Email string `json:"email"`
+	Token string `json:"token"`
 }
+
+const ExpirationDefault = 3600
 
 func main() {
 	
@@ -47,8 +51,8 @@ func main() {
 	apiCfg := &apiConfig{}
 	apiCfg.fileserverHits.Store(0)
 	apiCfg.dbQueries = dbQueries
-	
 	apiCfg.platform = os.Getenv("PLATFORM")
+	apiCfg.secret = os.Getenv("SECRET")
 
 	mux := http.NewServeMux()
 
@@ -114,9 +118,23 @@ func main() {
 			User_Id uuid.UUID `json:"user_id"`
 		}
 
+		tokenString, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting bearer token: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		userId, err := auth.ValidateJWT(tokenString, apiCfg.secret)
+		if err != nil {
+			log.Printf("Error validating JWT: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		decoder := json.NewDecoder(r.Body)
 		params := parameters{}
-		err := decoder.Decode(&params)
+		err = decoder.Decode(&params)
 		if err != nil {
 			log.Printf("Error decoding request body: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -129,7 +147,7 @@ func main() {
 			return
 		}
 
-		chirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: params.User_Id})
+		chirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: userId})
 		if err != nil {
 			log.Printf("Error creating chirp: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -250,6 +268,7 @@ func main() {
 		type parameters struct {
 			Email string `json:"email"`
 			Password string `json:"password"`
+			ExpiresInSeconds *int `json:"expiresinseconds,omitempty"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
@@ -274,12 +293,26 @@ func main() {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		timeout := ExpirationDefault
+		if params.ExpiresInSeconds != nil {
+			if *params.ExpiresInSeconds < 3600 {
+				timeout = *params.ExpiresInSeconds
+			}
+		}
+
+		token, err := auth.MakeJWT(user.ID, apiCfg.secret, time.Duration(timeout)* time.Second)
+		if err != nil {
+			log.Printf("Error creating token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 
 		userData := User{
 			ID: user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email: user.Email,
+			Token: token,
 		}
 		dat, err := json.Marshal(userData)
 		if err != nil {
