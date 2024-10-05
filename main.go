@@ -32,6 +32,7 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
 	Token string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 const ExpirationDefault = 3600
@@ -268,7 +269,6 @@ func main() {
 		type parameters struct {
 			Email string `json:"email"`
 			Password string `json:"password"`
-			ExpiresInSeconds *int `json:"expiresinseconds,omitempty"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
@@ -293,16 +293,27 @@ func main() {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		timeout := ExpirationDefault
-		if params.ExpiresInSeconds != nil {
-			if *params.ExpiresInSeconds < 3600 {
-				timeout = *params.ExpiresInSeconds
-			}
-		}
 
-		token, err := auth.MakeJWT(user.ID, apiCfg.secret, time.Duration(timeout)* time.Second)
+		token, err := auth.MakeJWT(user.ID, apiCfg.secret, time.Duration(ExpirationDefault)* time.Second)
 		if err != nil {
 			log.Printf("Error creating token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		refreshToken, err := auth.MakeRefreshToken()
+		if err != nil {
+			log.Printf("Error creating refresh token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		//Create a duration of 60 days
+		expiresOn := time.Now().Add(time.Hour*24*60)
+
+		_, err = apiCfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{ Token: refreshToken, UserID: user.ID, ExpiresAt: expiresOn})
+		if err != nil {
+			log.Printf("Error savving refresh token: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -313,6 +324,7 @@ func main() {
 			UpdatedAt: user.UpdatedAt,
 			Email: user.Email,
 			Token: token,
+			RefreshToken: refreshToken,
 		}
 		dat, err := json.Marshal(userData)
 		if err != nil {
@@ -324,6 +336,81 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write(dat)
+	})
+
+	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		refreshToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting bearer token: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		rToken, err := dbQueries.RefreshToken(r.Context(), refreshToken)
+		if err != nil {
+			log.Printf("Error retrieving refresh token: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if rToken.RevokedAt.Valid {
+			log.Printf("Refresh token revoked: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if rToken.ExpiresAt.Before(time.Now()) {
+			log.Printf("Refresh token expired: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		userId, err := dbQueries.UserFromRefreshToken(r.Context(), rToken.Token)
+		if err != nil {
+			log.Printf("Error retrieving user from refresh token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		token, err := auth.MakeJWT(userId, apiCfg.secret, time.Duration(ExpirationDefault)* time.Second)
+		if err != nil {
+			log.Printf("Error creating token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		type parameters struct {
+			Token string `json:"token"`
+		}
+
+		dat, err := json.Marshal(parameters{Token: token})
+		if err != nil {
+			log.Printf("Error marshalling token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(dat)
+	})
+
+	mux.HandleFunc("POST /api/revoke", func(w http.ResponseWriter, r *http.Request) {
+		refreshToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting bearer token: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		err = dbQueries.RevokeRefreshToken(r.Context(), refreshToken)
+		if err != nil {
+			log.Printf("Error revoking refresh token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
