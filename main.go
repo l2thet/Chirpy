@@ -284,7 +284,7 @@ func main() {
 		w.Write(dat)
 	})
 
-	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/chirps/{chirpId}", func(w http.ResponseWriter, r *http.Request) {
 		type Chirp struct{
 			Body string `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
@@ -293,7 +293,7 @@ func main() {
 			ID uuid.UUID `json:"id"`
 		}
 
-		idString := r.PathValue("chirpID")
+		idString := r.PathValue("chirpId")
 		id, err := uuid.Parse(idString)
 		if err != nil {
 			log.Printf("Error parsing UUID: %v", err)
@@ -304,7 +304,7 @@ func main() {
 		dbChirp, err := apiCfg.dbQueries.Chirp(r.Context(), id)
 		if err != nil {
 			log.Printf("Error retrieving chirp: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
@@ -469,6 +469,58 @@ func main() {
 		err = dbQueries.RevokeRefreshToken(r.Context(), refreshToken)
 		if err != nil {
 			log.Printf("Error revoking refresh token: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /api/chirps/{chirpId}", func(w http.ResponseWriter, r *http.Request) {
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting bearer token: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		userId, err := auth.ValidateJWT(token, apiCfg.secret)
+		if err != nil {
+			log.Printf("Error validating JWT: %v", err)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		chirpIdString := r.PathValue("chirpId")
+		chirpId, err := uuid.Parse(chirpIdString)
+		if err != nil {
+			log.Printf("Error parsing UUID: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		chirp, err := dbQueries.Chirp(r.Context(), chirpId)
+		if err != nil {
+			log.Printf("Error retrieving chirp: %v", err)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		if chirp == (database.Chirp{}) {
+			log.Printf("Chirp not found")
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		if chirp.UserID != userId {
+			log.Printf("User does not own chirp")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		err = dbQueries.DeleteChirp(r.Context(), chirpId)
+		if err != nil {
+			log.Printf("Error deleting chirp: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
