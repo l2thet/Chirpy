@@ -113,6 +113,69 @@ func main() {
 		w.Write(dat)
 	})
 
+	mux.HandleFunc(("PUT /api/users"), func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Email string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		tokenString, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			log.Printf("Error getting bearer token: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		userId, err := auth.ValidateJWT(tokenString, apiCfg.secret)
+		if err != nil {
+			log.Printf("Error validating JWT: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err = decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding request body: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		hashed_pass, err := auth.HashPassword(params.Password)
+		if err != nil {
+			log.Printf("Error hashing password: %v", err)
+			http.Error(w, "Error hashing password", http.StatusInternalServerError)
+			return
+		}
+
+		err = apiCfg.dbQueries.UpdateUser(r.Context(), database.UpdateUserParams{
+			ID: userId,
+			Email: params.Email,
+			HashedPassword: hashed_pass,
+		})
+		if err != nil {
+			log.Printf("Error updating user: %v", err)
+			http.Error(w, "Error updating user", http.StatusInternalServerError)
+			return
+		}
+
+		apiUser := User{
+			ID:        userId,
+			Email:     params.Email,
+		}
+		dat, err := json.Marshal(apiUser)
+		if err != nil {
+			log.Printf("Error marshalling user data: %v", err)
+			http.Error(w, "Error processing user data", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(dat)
+	})
+
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
 			Body string `json:"body"`
