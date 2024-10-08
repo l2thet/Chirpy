@@ -33,6 +33,7 @@ type User struct {
 	Email string `json:"email"`
 	Token string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
+	IsChirpyRed bool `json:"is_chirpy_red"`
 }
 
 const ExpirationDefault = 3600
@@ -100,6 +101,7 @@ func main() {
 			CreatedAt: dbUser.CreatedAt,
 			UpdatedAt: dbUser.UpdatedAt,
 			Email:     dbUser.Email,
+			IsChirpyRed: dbUser.IsChirpyRed,
 		}
 		dat, err := json.Marshal(apiUser)
 		if err != nil {
@@ -388,6 +390,7 @@ func main() {
 			Email: user.Email,
 			Token: token,
 			RefreshToken: refreshToken,
+			IsChirpyRed: user.IsChirpyRed,
 		}
 		dat, err := json.Marshal(userData)
 		if err != nil {
@@ -528,6 +531,43 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		type Data struct {
+			User_Id uuid.UUID `json:"user_id"`
+		}
+		type Request struct {
+			Event string `json:"event"`
+			Data Data `json:"data"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := Request{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding request body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Incoming event: %v", params)
+
+		if params.Event != "user.upgraded" {
+			log.Printf("Invalid event: %v", params.Event)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		err = dbQueries.UpgradeUser(r.Context(), params.Data.User_Id)
+		if err != nil {
+			log.Printf("Error upgrading user: %v", err)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	})
+	
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
 
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
