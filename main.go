@@ -24,6 +24,7 @@ type apiConfig struct {
 	dbQueries *database.Queries
 	platform string
 	secret string
+	polkaKey string
 }
 
 type User struct {
@@ -55,6 +56,7 @@ func main() {
 	apiCfg.dbQueries = dbQueries
 	apiCfg.platform = os.Getenv("PLATFORM")
 	apiCfg.secret = os.Getenv("SECRET")
+	apiCfg.polkaKey = os.Getenv("POLKA_KEY")
 
 	mux := http.NewServeMux()
 
@@ -247,13 +249,54 @@ func main() {
 		w.Write(dat)
 	})
 
-	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+
+	//Add query params to include author_id
+	mux.HandleFunc("GET /api/chirps/", func(w http.ResponseWriter, r *http.Request) {
 		type Chirp struct{
 			Body string `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
 			UserID uuid.UUID `json:"user_id"`
 			ID uuid.UUID `json:"id"`
+		}
+
+		authorIdString := r.URL.Query().Get("author_id")
+		authorId, err := uuid.Parse(authorIdString)
+		if err != nil {
+			log.Printf("Error parsing UUID: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		if authorId != uuid.Nil {
+			chirps, err := apiCfg.dbQueries.AuthorChirps(r.Context(), authorId)
+			if err != nil {
+				log.Printf("Error retrieving chirps: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			var chirpList []Chirp
+			for _, chirp := range chirps {
+				chirpList = append(chirpList, Chirp{
+					Body: stringCleaner(chirp.Body),
+					CreatedAt: chirp.CreatedAt,
+					UpdatedAt: chirp.UpdatedAt,
+					UserID: chirp.UserID,
+					ID: chirp.ID,
+				})
+			}
+
+			dat, err := json.Marshal(chirpList)
+			if err != nil {
+				log.Printf("Error building the response: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(dat)
 		}
 
 		dbChirps, err := apiCfg.dbQueries.Chirps(r.Context())
@@ -540,9 +583,22 @@ func main() {
 			Data Data `json:"data"`
 		}
 
+		apiKey, err := auth.GetAPIKey(r.Header)
+		if err != nil {
+			log.Printf("Error getting API key: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if apiKey != apiCfg.polkaKey {
+			log.Printf("Invalid API key: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		decoder := json.NewDecoder(r.Body)
 		params := Request{}
-		err := decoder.Decode(&params)
+		err = decoder.Decode(&params)
 		if err != nil {
 			log.Printf("Error decoding request body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
