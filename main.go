@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -21,26 +22,26 @@ import (
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
-	dbQueries *database.Queries
-	platform string
-	secret string
-	polkaKey string
+	dbQueries      *database.Queries
+	platform       string
+	secret         string
+	polkaKey       string
 }
 
 type User struct {
-	ID uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email string `json:"email"`
-	Token string `json:"token"`
-	RefreshToken string `json:"refresh_token"`
-	IsChirpyRed bool `json:"is_chirpy_red"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 const ExpirationDefault = 3600
 
 func main() {
-	
+
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
@@ -68,7 +69,7 @@ func main() {
 
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Email string `json:"email"`
+			Email    string `json:"email"`
 			Password string `json:"password"`
 		}
 
@@ -77,8 +78,8 @@ func main() {
 		err := decoder.Decode(&params)
 		if err != nil {
 			log.Printf("Error decoding request body: %v", err)
-            http.Error(w, "Invalid request payload", http.StatusBadRequest)
-            return
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
 		}
 
 		hashed_pass, err := auth.HashPassword(params.Password)
@@ -89,27 +90,27 @@ func main() {
 		}
 
 		dbUser, err := apiCfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{
-			Email:    params.Email,
+			Email:          params.Email,
 			HashedPassword: hashed_pass,
 		})
 		if err != nil {
 			log.Printf("Error creating user: %v", err)
-            http.Error(w, "Error creating user", http.StatusInternalServerError)
+			http.Error(w, "Error creating user", http.StatusInternalServerError)
 			return
 		}
 
 		apiUser := User{
-			ID:        dbUser.ID,
-			CreatedAt: dbUser.CreatedAt,
-			UpdatedAt: dbUser.UpdatedAt,
-			Email:     dbUser.Email,
+			ID:          dbUser.ID,
+			CreatedAt:   dbUser.CreatedAt,
+			UpdatedAt:   dbUser.UpdatedAt,
+			Email:       dbUser.Email,
 			IsChirpyRed: dbUser.IsChirpyRed,
 		}
 		dat, err := json.Marshal(apiUser)
 		if err != nil {
 			log.Printf("Error marshalling user data: %v", err)
-            http.Error(w, "Error processing user data", http.StatusInternalServerError)
-            return
+			http.Error(w, "Error processing user data", http.StatusInternalServerError)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -119,7 +120,7 @@ func main() {
 
 	mux.HandleFunc(("PUT /api/users"), func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Email string `json:"email"`
+			Email    string `json:"email"`
 			Password string `json:"password"`
 		}
 
@@ -154,8 +155,8 @@ func main() {
 		}
 
 		err = apiCfg.dbQueries.UpdateUser(r.Context(), database.UpdateUserParams{
-			ID: userId,
-			Email: params.Email,
+			ID:             userId,
+			Email:          params.Email,
 			HashedPassword: hashed_pass,
 		})
 		if err != nil {
@@ -165,8 +166,8 @@ func main() {
 		}
 
 		apiUser := User{
-			ID:        userId,
-			Email:     params.Email,
+			ID:    userId,
+			Email: params.Email,
 		}
 		dat, err := json.Marshal(apiUser)
 		if err != nil {
@@ -182,7 +183,7 @@ func main() {
 
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Body string `json:"body"`
+			Body    string    `json:"body"`
 			User_Id uuid.UUID `json:"user_id"`
 		}
 
@@ -222,19 +223,19 @@ func main() {
 			return
 		}
 
-		type Chirp struct{
-			Body string `json:"body"`
+		type Chirp struct {
+			Body      string    `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
-			UserID uuid.UUID `json:"user_id"`
-			ID uuid.UUID `json:"id"`
+			UserID    uuid.UUID `json:"user_id"`
+			ID        uuid.UUID `json:"id"`
 		}
 		respBody := Chirp{
-			Body: stringCleaner(chirp.Body),
+			Body:      stringCleaner(chirp.Body),
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
-			UserID: chirp.UserID,
-			ID: chirp.ID,
+			UserID:    chirp.UserID,
+			ID:        chirp.ID,
 		}
 
 		dat, err := json.Marshal(respBody)
@@ -249,23 +250,30 @@ func main() {
 		w.Write(dat)
 	})
 
-
-	//Add query params to include author_id
 	mux.HandleFunc("GET /api/chirps/", func(w http.ResponseWriter, r *http.Request) {
-		type Chirp struct{
-			Body string `json:"body"`
+		type Chirp struct {
+			Body      string    `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
-			UserID uuid.UUID `json:"user_id"`
-			ID uuid.UUID `json:"id"`
+			UserID    uuid.UUID `json:"user_id"`
+			ID        uuid.UUID `json:"id"`
 		}
 
 		authorIdString := r.URL.Query().Get("author_id")
-		authorId, err := uuid.Parse(authorIdString)
-		if err != nil {
-			log.Printf("Error parsing UUID: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
+		authorId := uuid.Nil
+		if authorIdString != "" {
+			authorId, err = uuid.Parse(authorIdString)
+			if err != nil {
+				log.Printf("Error parsing UUID: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
+
+		sortDirection := "asc"
+		sortDirectionParam := r.URL.Query().Get("sort")
+		if sortDirectionParam == "desc" {
+			sortDirection = "desc"
 		}
 
 		if authorId != uuid.Nil {
@@ -279,13 +287,20 @@ func main() {
 			var chirpList []Chirp
 			for _, chirp := range chirps {
 				chirpList = append(chirpList, Chirp{
-					Body: stringCleaner(chirp.Body),
+					Body:      stringCleaner(chirp.Body),
 					CreatedAt: chirp.CreatedAt,
 					UpdatedAt: chirp.UpdatedAt,
-					UserID: chirp.UserID,
-					ID: chirp.ID,
+					UserID:    chirp.UserID,
+					ID:        chirp.ID,
 				})
 			}
+
+			sort.Slice(chirps, func(i, j int) bool {
+				if sortDirection == "desc" {
+					return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+				}
+				return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+			})
 
 			dat, err := json.Marshal(chirpList)
 			if err != nil {
@@ -301,21 +316,28 @@ func main() {
 
 		dbChirps, err := apiCfg.dbQueries.Chirps(r.Context())
 		if err != nil {
-			log.Printf("Error creating chirp: %v", err)
+			log.Printf("Error retrieving chirps: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		
+
 		var chirps []Chirp
 		for _, dbChirp := range dbChirps {
 			chirps = append(chirps, Chirp{
-				Body: stringCleaner(dbChirp.Body),
+				Body:      stringCleaner(dbChirp.Body),
 				CreatedAt: dbChirp.CreatedAt,
 				UpdatedAt: dbChirp.UpdatedAt,
-				UserID: dbChirp.UserID,
-				ID: dbChirp.ID,
+				UserID:    dbChirp.UserID,
+				ID:        dbChirp.ID,
 			})
 		}
+
+		sort.Slice(chirps, func(i, j int) bool {
+			if sortDirection == "desc" {
+				return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+			}
+			return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+		})
 
 		dat, err := json.Marshal(chirps)
 		if err != nil {
@@ -330,12 +352,12 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /api/chirps/{chirpId}", func(w http.ResponseWriter, r *http.Request) {
-		type Chirp struct{
-			Body string `json:"body"`
+		type Chirp struct {
+			Body      string    `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
 			UpdatedAt time.Time `json:"updated_at"`
-			UserID uuid.UUID `json:"user_id"`
-			ID uuid.UUID `json:"id"`
+			UserID    uuid.UUID `json:"user_id"`
+			ID        uuid.UUID `json:"id"`
 		}
 
 		idString := r.PathValue("chirpId")
@@ -354,11 +376,11 @@ func main() {
 		}
 
 		chirp := Chirp{
-			Body: stringCleaner(dbChirp.Body),
+			Body:      stringCleaner(dbChirp.Body),
 			CreatedAt: dbChirp.CreatedAt,
 			UpdatedAt: dbChirp.UpdatedAt,
-			UserID: dbChirp.UserID,
-			ID: dbChirp.ID,
+			UserID:    dbChirp.UserID,
+			ID:        dbChirp.ID,
 		}
 
 		dat, err := json.Marshal(chirp)
@@ -375,7 +397,7 @@ func main() {
 
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		type parameters struct {
-			Email string `json:"email"`
+			Email    string `json:"email"`
 			Password string `json:"password"`
 		}
 
@@ -402,7 +424,7 @@ func main() {
 			return
 		}
 
-		token, err := auth.MakeJWT(user.ID, apiCfg.secret, time.Duration(ExpirationDefault)* time.Second)
+		token, err := auth.MakeJWT(user.ID, apiCfg.secret, time.Duration(ExpirationDefault)*time.Second)
 		if err != nil {
 			log.Printf("Error creating token: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -417,9 +439,9 @@ func main() {
 		}
 
 		//Create a duration of 60 days
-		expiresOn := time.Now().Add(time.Hour*24*60)
+		expiresOn := time.Now().Add(time.Hour * 24 * 60)
 
-		_, err = apiCfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{ Token: refreshToken, UserID: user.ID, ExpiresAt: expiresOn})
+		_, err = apiCfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{Token: refreshToken, UserID: user.ID, ExpiresAt: expiresOn})
 		if err != nil {
 			log.Printf("Error savving refresh token: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -427,19 +449,19 @@ func main() {
 		}
 
 		userData := User{
-			ID: user.ID,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
-			Email: user.Email,
-			Token: token,
+			ID:           user.ID,
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
+			Email:        user.Email,
+			Token:        token,
 			RefreshToken: refreshToken,
-			IsChirpyRed: user.IsChirpyRed,
+			IsChirpyRed:  user.IsChirpyRed,
 		}
 		dat, err := json.Marshal(userData)
 		if err != nil {
 			log.Printf("Error marshalling user data: %v", err)
-            http.Error(w, "Error processing user data", http.StatusInternalServerError)
-            return
+			http.Error(w, "Error processing user data", http.StatusInternalServerError)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -481,7 +503,7 @@ func main() {
 			return
 		}
 
-		token, err := auth.MakeJWT(userId, apiCfg.secret, time.Duration(ExpirationDefault)* time.Second)
+		token, err := auth.MakeJWT(userId, apiCfg.secret, time.Duration(ExpirationDefault)*time.Second)
 		if err != nil {
 			log.Printf("Error creating token: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -580,7 +602,7 @@ func main() {
 		}
 		type Request struct {
 			Event string `json:"event"`
-			Data Data `json:"data"`
+			Data  Data   `json:"data"`
 		}
 
 		apiKey, err := auth.GetAPIKey(r.Header)
@@ -623,7 +645,7 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 
 	})
-	
+
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
 
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
@@ -633,7 +655,7 @@ func main() {
 	mux.Handle("/app/assets/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
 
 	server := http.Server{
-		Addr: ":8080",
+		Addr:    ":8080",
 		Handler: mux,
 	}
 
@@ -641,29 +663,29 @@ func main() {
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        cfg.fileserverHits.Add(1)
-        next.ServeHTTP(w, r)
-    })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg.fileserverHits.Add(1)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.ParseFiles("templates/metrics.html")
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-    
-    w.Header().Set("Content-Type", "text/html")
-
-    err = tmpl.Execute(w, cfg.fileserverHits.Load())
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-    }
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+
+	err = tmpl.Execute(w, cfg.fileserverHits.Load())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
-func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request){
+func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	if cfg.platform != "dev" {
 		w.WriteHeader(http.StatusForbidden)
 		return
@@ -679,30 +701,30 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request){
 }
 
 func stringCleaner(input string) string {
-	patterns := []string{`kerfuffle`,`sharbert`, `fornax`}
+	patterns := []string{`kerfuffle`, `sharbert`, `fornax`}
 	compiledPatterns, err := compilePatterns(patterns)
-    if err != nil {
+	if err != nil {
 		return fmt.Sprintf("Error compiling patterns: %s", err)
-    }
+	}
 
 	return stringReplace(input, compiledPatterns)
 }
 
 func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
-    var compiledPatterns []*regexp.Regexp
-    for _, pattern := range patterns {
-        re, err := regexp.Compile("(?i)" + pattern)
-        if err != nil {
-            return nil, err
-        }
-        compiledPatterns = append(compiledPatterns, re)
-    }
-    return compiledPatterns, nil
+	var compiledPatterns []*regexp.Regexp
+	for _, pattern := range patterns {
+		re, err := regexp.Compile("(?i)" + pattern)
+		if err != nil {
+			return nil, err
+		}
+		compiledPatterns = append(compiledPatterns, re)
+	}
+	return compiledPatterns, nil
 }
 
 func stringReplace(input string, patterns []*regexp.Regexp) string {
-    for _, re := range patterns {
-        input = re.ReplaceAllString(input, "****")
-    }
-    return input
+	for _, re := range patterns {
+		input = re.ReplaceAllString(input, "****")
+	}
+	return input
 }
