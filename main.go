@@ -250,7 +250,7 @@ func main() {
 		w.Write(dat)
 	})
 
-	mux.HandleFunc("GET /api/chirps/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		type Chirp struct {
 			Body      string    `json:"body"`
 			CreatedAt time.Time `json:"created_at"`
@@ -360,7 +360,7 @@ func main() {
 			ID        uuid.UUID `json:"id"`
 		}
 
-		idString := r.PathValue("chirpId")
+		idString := r.URL.Query().Get("chirpId")
 		id, err := uuid.Parse(idString)
 		if err != nil {
 			log.Printf("Error parsing UUID: %v", err)
@@ -559,7 +559,7 @@ func main() {
 			return
 		}
 
-		chirpIdString := r.PathValue("chirpId")
+		chirpIdString := r.URL.Query().Get("chirpId")
 		chirpId, err := uuid.Parse(chirpIdString)
 		if err != nil {
 			log.Printf("Error parsing UUID: %v", err)
@@ -659,7 +659,12 @@ func main() {
 		Handler: mux,
 	}
 
-	server.ListenAndServe()
+	log.Printf("Starting server on %s", server.Addr)
+
+	err = server.ListenAndServe()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
