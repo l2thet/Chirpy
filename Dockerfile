@@ -7,8 +7,8 @@ RUN go install github.com/pressly/goose/v3/cmd/goose@v3.7.0
 # Stage 2: Build the final image
 FROM golang:1.19-alpine
 
-# Install curl
-RUN apk add --no-cache curl
+# Install curl and PostgreSQL client
+RUN apk add --no-cache curl postgresql-client
 
 # Create a working directory
 WORKDIR /app
@@ -26,7 +26,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-# RUN go build -o Chirpy .
+RUN go build -o Chirpy .
 
 # Copy .env file
 COPY .env /app/.env
